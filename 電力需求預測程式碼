@@ -14,8 +14,8 @@ from sklearn.tree import DecisionTreeRegressor
 from sklearn.model_selection import RandomizedSearchCV
 from sklearn.ensemble import RandomForestRegressor
 import xgboost as xgb
-#from hyperopt import  hp,fmin, tpe, rand, STATUS_OK, Trials
 import seaborn as sns
+
 #%%
 power = pd.read_csv('electricity.csv')
 power=power.drop(['Time','WEP','MEP'],axis=1)
