@@ -1,0 +1,402 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+
+# In[1]:
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.svm import SVR
+from sklearn.preprocessing import MinMaxScaler
+from sklearn import metrics
+from sklearn.model_selection import GridSearchCV
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.model_selection import RandomizedSearchCV
+from sklearn.ensemble import RandomForestRegressor
+import xgboost as xgb
+#from hyperopt import  hp,fmin, tpe, rand, STATUS_OK, Trials
+import seaborn as sns
+#%%
+power = pd.read_csv('electricity.csv')
+power=power.drop(['Time','WEP','MEP'],axis=1)
+#power = power[['IPI','AverageTemp','ExportOrderAmount','ImportTotalValue_MachineryandEquipment','Humidity','SeasonIndex',
+#               'RegularWage','TotalDemand']]
+
+print("資料特徵數(x+y)："+str(len(list(power.columns))))#+str(len(list(power.columns)))
+print(power.columns)
+
+x = power.iloc[0:289, 0:14]
+y = power.iloc[0:289, 14]
+
+x_train= power.iloc[0:264, 0:14]
+y_train= power.iloc[0:264, 14]
+x_test= power.iloc[264:288, 0:14]
+y_test= power.iloc[264:288, 14]
+
+print(x_train.shape, y_train.shape, x_test.shape, y_test.shape)
+
+# In[3]:
+## CART
+###調最佳參數
+DT_param = { 'min_samples_split': list((8,10,12)),'min_samples_leaf':list((6,8,10)),
+            'max_depth':np.linspace(3,6,4,dtype=int),'max_features':list((0.6,0.8,1))}#'auto','sqrt','log2'
+grid = GridSearchCV(DecisionTreeRegressor(random_state=10),
+                    param_grid=DT_param, cv=3)
+grid.fit(x_train, y_train)
+grid.cv_results_, grid.best_params_, grid.best_score_
+print(grid.best_params_)
+
+# In[35]:
+grid.best_estimator_
+DT = DecisionTreeRegressor(max_depth=grid.best_params_['max_depth'], 
+        min_samples_leaf=grid.best_params_['min_samples_leaf'],
+        min_samples_split=grid.best_params_['min_samples_split'],
+        max_features=grid.best_params_['max_features'])
+DT.fit(x_train, y_train)
+
+DT_imp = pd.DataFrame({'Features':x.columns,
+                       'Importance':DT.feature_importances_})
+print('\nFeature importance:\n',DT_imp.sort_values(by=['Importance'],ascending=False))
+
+# 排序
+DT_imp = pd.DataFrame({'Features': x.columns, 'Importance': DT.feature_importances_})
+
+# 按重要性排序
+DT_imp = DT_imp.sort_values(by='Importance', ascending=False).reset_index(drop=True)
+
+# 計算累積百分比
+DT_imp['Cumulative Importance'] = DT_imp['Importance'].cumsum()
+
+# 將百分比格式化為百分值（可選）
+DT_imp['Cumulative Importance (%)'] = (DT_imp['Cumulative Importance'] * 100).round(2)
+
+# 顯示結果
+print(DT_imp)
+DT_imp = DT_imp.sort_values(by='Importance', ascending=False)
+
+# 可視化
+plt.figure(figsize=(10, 6))
+plt.barh(DT_imp['Features'], DT_imp['Importance'], color='skyblue')
+plt.xlabel('Importance')
+plt.ylabel('Features')
+plt.title('Feature Importance')
+plt.gca().invert_yaxis()  # 反轉 y 軸，使重要性最高的特徵在頂端
+plt.show()
+
+
+# %%
+# In[36]:
+
+#####train
+DT_train = DT.predict(x_train)
+rmse_DT_tr = np.sqrt(metrics.mean_squared_error(y_train,DT_train))
+print('\nRMSE for DT of dataset = ', rmse_DT_tr)
+#MAE
+mae_DT_tr = metrics.mean_absolute_error(y_train,DT_train)
+print('\nMAE for DT of dataset = ', mae_DT_tr)
+#MAPE
+mape_DT_tr = metrics.mean_absolute_percentage_error(y_train,DT_train)
+print('\nMAPE for DT of dataset = ', mape_DT_tr)
+
+#####test
+DT_test = DT.predict(x_test)
+rmse_DT_ts = np.sqrt(metrics.mean_squared_error(y_test,DT_test))
+print('\nRMSE for DT of dataset = ', rmse_DT_ts)
+#MAE
+mae_DT_ts = metrics.mean_absolute_error(y_test,DT_test)
+print('\nMAE for DT of dataset = ', mae_DT_ts)
+#MAPE
+mape_DT_ts = metrics.mean_absolute_percentage_error(y_test,DT_test)
+print('\nMAPE for DT of dataset = ', mape_DT_ts)
+
+# 繪製決策樹的散點圖和殘差圖
+plt.figure(figsize=(12, 5))
+
+plt.subplot(1, 2, 1)
+sns.scatterplot(x=y_test, y=DT_test)
+plt.plot(y_test, y_test, color='red', linestyle='--') # 畫一條 y=x 的參考線
+plt.xlabel('Actual')
+plt.ylabel('Predicted(Decision Tree)')
+plt.title('Decision Tree:Actual vs Predicted')
+
+plt.subplot(1, 2, 2)
+residuals_DT = y_test - DT_test
+sns.scatterplot(x=DT_test, y=residuals_DT)
+plt.axhline(y=0, color='red', linestyle='--') # 畫一條 y=0 的參考線
+plt.xlabel('Predicted (Decision Tree)')
+plt.ylabel('Residual (Actual - Predicted)')
+plt.title('DF:Residual')
+
+plt.tight_layout()
+plt.show()
+# In[8]:
+## RF
+###調最佳參數
+RF_param = { 'min_samples_split': list((8,10,12)),'min_samples_leaf':list((6,8,10)),
+                   'max_depth':np.linspace(3,6,4,dtype=int),'n_estimators':list((50,100,150)),
+                  'max_features':list((0.6,0.8,1))}#
+grid = GridSearchCV(RandomForestRegressor(criterion="absolute_error",random_state=10),
+                    param_grid=RF_param, cv=3)
+grid.fit(x_train, y_train)
+grid.cv_results_, grid.best_params_, grid.best_score_
+
+# In[38]:
+grid.best_estimator_
+RF = RandomForestRegressor(max_depth=grid.best_params_['max_depth'], 
+        min_samples_leaf=grid.best_params_['min_samples_leaf'],
+        min_samples_split=grid.best_params_['min_samples_split'],
+        max_features=grid.best_params_['max_features'], 
+        n_estimators=grid.best_params_['n_estimators'])#
+
+RF.fit(x_train, y_train)
+
+### 變數重要性
+RF_imp = pd.DataFrame({'Features':x.columns,
+                       'Importance':RF.feature_importances_})
+print('\nFeature importance:\n',RF_imp.sort_values(by=['Importance'],ascending=False))
+RF_imp = pd.DataFrame({'Features': x.columns, 'Importance': DT.feature_importances_})
+
+# 按重要性排序
+RF_imp = DT_imp.sort_values(by='Importance', ascending=False).reset_index(drop=True)
+
+# 計算累積百分比
+RF_imp['Cumulative Importance'] = DT_imp['Importance'].cumsum()
+
+# 將百分比格式化為百分值（可選）
+RF_imp['Cumulative Importance (%)'] = (DT_imp['Cumulative Importance'] * 100).round(2)
+
+# 顯示結果
+print(RF_imp)
+RF_imp = RF_imp.sort_values(by='Importance', ascending=False)
+
+# In[39]:
+#####train
+RF_train = RF.predict(x_train)
+rmse_RF_tr = np.sqrt(metrics.mean_squared_error(y_train,RF_train))
+print('\nRMSE for RF of dataset = ', rmse_RF_tr)
+#MAE
+mae_RF_tr = metrics.mean_absolute_error(y_train,RF_train)
+print('\nMAE for RF of dataset = ', mae_RF_tr)
+#MAPE
+mape_RF_tr = metrics.mean_absolute_percentage_error(y_train,RF_train)
+print('\nMAPE for RF of dataset = ', mape_RF_tr)
+
+#####test
+RF_test = RF.predict(x_test)
+rmse_RF_ts = np.sqrt(metrics.mean_squared_error(y_test,RF_test))
+print('\nRMSE for RF of dataset = ', rmse_RF_ts)
+#MAE
+mae_RF_ts = metrics.mean_absolute_error(y_test,RF_test)
+print('\nMAE for RF of dataset = ', mae_RF_ts)
+#MAPE
+mape_RF_ts = metrics.mean_absolute_percentage_error(y_test,RF_test)
+print('\nMAPE for RF of dataset = ', mape_RF_ts)
+
+# 繪製隨機森林的散點圖和殘差圖
+plt.figure(figsize=(12, 5))
+
+plt.subplot(1, 2, 1)
+sns.scatterplot(x=y_test, y=RF_test)
+plt.plot(y_test, y_test, color='red', linestyle='--')
+plt.xlabel('Actual')
+plt.ylabel('Predicted (RF)')
+plt.title('RF:Pre vs Actual')
+
+plt.subplot(1, 2, 2)
+residuals_RF = y_test - RF_test
+sns.scatterplot(x=RF_test, y=residuals_RF)
+plt.axhline(y=0, color='red', linestyle='--')
+plt.xlabel('Pre (RF)')
+plt.ylabel('Residual (Actual - Pre)')
+plt.title('RF:Residual')
+
+plt.tight_layout()
+plt.show()
+
+# In[13]:
+## XGB
+###調最佳參數
+XGB_param = { 'min_samples_split': list((8,10,12)),'n_estimators':list((50,100,150)),
+                   'max_depth':np.linspace(3,6,4,dtype=int),
+                   'min_child_weight':np.linspace(5,10,3,dtype=int),
+                   'max_features':list((0.6,0.8,1)), 'learning_rate' : list((0.01,0.05,0.1))}
+grid = GridSearchCV(xgb.XGBRegressor(random_state=10),
+                    param_grid=XGB_param, cv=3)
+grid.fit(x_train, y_train)
+grid.cv_results_, grid.best_params_, grid.best_score_
+
+# In[41]:
+grid.best_estimator_
+
+XGB = xgb.XGBRegressor(max_depth=grid.best_params_['max_depth'], 
+        learning_rate=grid.best_params_['learning_rate'],
+        min_child_weight=grid.best_params_['min_child_weight'],
+        min_samples_split=grid.best_params_['min_samples_split'],
+        max_features=grid.best_params_['max_features'], 
+        n_estimators=grid.best_params_['n_estimators'])
+
+XGB.fit(x_train, y_train)
+
+### 變數重要性
+XGB_imp = pd.DataFrame({'Features':x.columns,
+                       'Importance':DT.feature_importances_})
+print('\nFeature importance:\n',XGB_imp.sort_values(by=['Importance'],ascending=False))
+
+# In[42]:
+
+#####train
+XGB_train = XGB.predict(x_train)
+rmse_XGB_tr = np.sqrt(metrics.mean_squared_error(y_train,XGB_train))
+print('\nRMSE for XGB of train dataset = ', rmse_XGB_tr)
+#MAE
+mae_XGB_tr = metrics.mean_absolute_error(y_train,XGB_train)
+print('\nMAE for XGB of train dataset = ', mae_XGB_tr)
+#MAPE
+mape_XGB_tr = metrics.mean_absolute_percentage_error(y_train,XGB_train)
+print('\nMAPE for XGB of train dataset = ', mape_XGB_tr)
+
+#####test
+XGB_test = XGB.predict(x_test)
+rmse_XGB_ts = np.sqrt(metrics.mean_squared_error(y_test,XGB_test))
+print('\nRMSE for XGB of test dataset = ', rmse_XGB_ts)
+#MAE
+mae_XGB_ts = metrics.mean_absolute_error(y_test,XGB_test)
+print('\nMAE for XGB of test dataset = ', mae_XGB_ts)
+#MAPE
+mape_XGB_ts = metrics.mean_absolute_percentage_error(y_test,XGB_test)
+print('\nMAPE for XGB of test dataset = ', mape_XGB_ts)
+
+# 繪製 XGBoost 的散點圖和殘差圖
+plt.figure(figsize=(12, 5))
+
+plt.subplot(1, 2, 1)
+sns.scatterplot(x=y_test, y=XGB_test)
+plt.plot(y_test, y_test, color='red', linestyle='--')
+plt.xlabel('Actual')
+plt.ylabel('Pre (XGBoost)')
+plt.title('XGBoost:Pre vs Actual')
+
+plt.subplot(1, 2, 2)
+residuals_XGB = y_test - XGB_test
+sns.scatterplot(x=XGB_test, y=residuals_XGB)
+plt.axhline(y=0, color='red', linestyle='--')
+plt.xlabel('Pre (XGBoost)')
+plt.ylabel('Residual (Actual - Pre)')
+plt.title('XGBoost:Residual')
+
+plt.tight_layout()
+plt.show()
+#%%For SVR/DNN
+#MinMAXscaler
+X_scaler = MinMaxScaler()
+X_tr=X_scaler.fit_transform(x_train)
+X_ts=X_scaler.transform(x_test)
+
+#%%
+parameters = {'kernel':['rbf','poly'], 'C':[50,100,150], 
+              'gamma':[5**-3, 5**-2, 5**-1, 1,5,25,125],
+              'epsilon':[0.05,0.1,0.15],'degree':[1,2,3]}
+svr= SVR()
+grid = GridSearchCV(svr, param_grid=parameters,cv=3)
+grid.fit(X_tr,y_train)
+grid.cv_results_, grid.best_params_, grid.best_score_
+
+print(grid.best_params_)
+svr = SVR(kernel=grid.best_params_['kernel'],C=grid.best_params_['C'],epsilon=grid.best_params_['epsilon']
+          ,gamma=grid.best_params_['gamma'],degree=grid.best_params_['degree'])
+svr.fit(X_tr,y_train)
+
+#%%
+#####train
+SVR_train = svr.predict(X_tr)
+rmse_SVR_tr = np.sqrt(metrics.mean_squared_error(y_train,SVR_train))
+print('\nRMSE for SVR of dataset = ', rmse_SVR_tr)
+#MAE
+mae_SVR_tr = metrics.mean_absolute_error(y_train,SVR_train)
+print('\nMAE for SVR of dataset = ', mae_SVR_tr)
+#MAPE
+mape_SVR_tr = metrics.mean_absolute_percentage_error(y_train,SVR_train)
+print('\nMAPE for SVR of dataset = ', mape_SVR_tr)
+
+#####test
+SVR_test = svr.predict(X_ts)
+rmse_SVR_ts = np.sqrt(metrics.mean_squared_error(y_test,SVR_test))
+print('\nRMSE for SVR of dataset = ', rmse_SVR_ts)
+#MAE
+mae_SVR_ts = metrics.mean_absolute_error(y_test,SVR_test)
+print('\nMAE for SVR of dataset = ', mae_SVR_ts)
+#MAPE
+mape_SVR_ts = metrics.mean_absolute_percentage_error(y_test,SVR_test)
+print('\nMAPE for SVR of dataset = ', mape_SVR_ts)
+
+# 繪製 SVR 的散點圖和殘差圖
+plt.figure(figsize=(12, 5))
+
+plt.subplot(1, 2, 1)
+sns.scatterplot(x=y_test, y=SVR_test)
+plt.plot(y_test, y_test, color='red', linestyle='--')
+plt.xlabel('Actual')
+plt.ylabel('Pre (SVR)')
+plt.title('SVR:Pre vs Actual')
+
+plt.subplot(1, 2, 2)
+residuals_SVR = y_test - SVR_test
+sns.scatterplot(x=SVR_test, y=residuals_SVR)
+plt.axhline(y=0, color='red', linestyle='--')
+plt.xlabel('Pre (SVR)')
+plt.ylabel('Residual (Actual - Pre)')
+plt.title('SVR:Residual')
+
+plt.tight_layout()
+plt.show()
+# In[45]:
+##四種種模型比較
+perf_tr = pd.DataFrame({
+    'Training':['RMSE','MAE','MAPE'],
+    'DT':[round(x, 3) for x in (rmse_DT_tr,mae_DT_tr,mape_DT_tr)],
+    'RF':[round(x, 3) for x in(rmse_RF_tr,mae_RF_tr,mape_RF_tr)],
+    'XGB':[round(x, 3) for x in(rmse_XGB_tr,mae_XGB_tr,mape_XGB_tr)],
+    'SVR':[round(x, 3) for x in(rmse_SVR_tr,mae_SVR_tr,mape_SVR_tr)]
+})
+
+perf_ts = pd.DataFrame({
+    'Testing':['RMSE','MAE','MAPE'],
+    'DT':[round(x, 3) for x in (rmse_DT_ts,mae_DT_ts,mape_DT_ts)],
+    'RF':[round(x, 3) for x in(rmse_RF_ts,mae_RF_ts,mape_RF_ts)],
+    'XGB':[round(x, 3) for x in(rmse_XGB_ts,mae_XGB_ts,mape_XGB_ts)],
+    'SVR':[round(x, 3) for x in(rmse_SVR_ts,mae_SVR_ts,mape_SVR_ts)]
+})
+perf_tr = perf_tr.set_index(['Training'],drop=True)
+perf_ts = perf_ts.set_index(['Testing'],drop=True)
+
+print(perf_tr)
+print('\n',perf_ts)
+
+#%%
+#plot
+real=pd.concat([pd.DataFrame(y_train),pd.DataFrame(y_test)],axis=0)
+real.index= pd.date_range('2001',periods = 288,freq = '1m')
+DT_pred=pd.concat([pd.DataFrame(DT_train),pd.DataFrame(DT_test)],axis=0)
+DT_pred=DT_pred.reset_index(drop=True)
+DT_pred.index= pd.date_range('2001',periods = 288,freq = '1m')
+RF_pred=pd.concat([pd.DataFrame(RF_train),pd.DataFrame(RF_test)],axis=0)
+RF_pred=RF_pred.reset_index(drop=True)
+RF_pred.index= pd.date_range('2001',periods = 288,freq = '1m')
+XGB_pred=pd.concat([pd.DataFrame(XGB_train),pd.DataFrame(XGB_test)],axis=0)
+XGB_pred=XGB_pred.reset_index(drop=True)
+XGB_pred.index= pd.date_range('2001',periods = 288,freq = '1m')
+SVR_pred=pd.concat([pd.DataFrame(SVR_train),pd.DataFrame(SVR_test)],axis=0)
+SVR_pred=SVR_pred.reset_index(drop=True)
+SVR_pred.index= pd.date_range('2001',periods = 288,freq = '1m')
+
+plt.figure(figsize=(20,10))
+plt.plot( real, color='black', label="Real",linewidth=1.5)
+plt.plot( DT_pred, color='green', label="DT_pred",linewidth=1.5)
+plt.plot( RF_pred, color='orange', label="RF_pred",linewidth=1.5)
+plt.plot( XGB_pred, color='red', label="XGB_pred",linewidth=1.5)
+plt.plot( SVR_pred, color='blue', label="SVR_pred",linewidth=1.5)
+
+plt.legend(loc = 'lower left')
+plt.legend(fontsize=15)
+plt.xlabel('Date', size=15)
+plt.ylabel('Taiwan_electricity', size=15)
